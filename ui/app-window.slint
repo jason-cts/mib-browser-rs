@@ -1,0 +1,713 @@
+import {
+    Button,
+    VerticalBox,
+    ComboBox,
+    LineEdit,
+    HorizontalBox,
+    StandardListView,
+    StandardButton,
+    ListView,
+    CheckBox,
+    ScrollView,
+    GridBox,
+    AboutSlint,
+} from "std-widgets.slint";
+
+struct MibNode {
+    name: string,
+    oid: string,
+    indent: int,
+    is_expanded: bool,
+    has_children: bool,
+}
+
+struct MibPropertyValues {
+    name: string,
+    oid: string,
+    mib_module: string,
+    syntax: string,
+    access: string,
+    status: string,
+    defval: string,
+    indexes: string,
+    descr: string,
+}
+
+struct UnloadMibItem {
+    path: string,
+    checked: bool,
+}
+
+export component AppWindow inherits Window {
+    title: "MIB Browser";
+    min-width: 720pt;
+
+    MenuBar {
+        Menu {
+            title: @tr("File");
+
+            MenuItem {
+                title: "Load MIBs...";
+                activated => {
+                    menu-file-load();
+                }
+                shortcut: @keys(Control + O);
+            }
+
+            MenuItem {
+                title: "Unload MIBs...";
+                activated => {
+                    menu-file-unload();
+                }
+                shortcut: @keys(Control + W);
+            }
+
+            MenuSeparator { }
+
+            MenuItem {
+                title: "Exit";
+                activated => {
+                    menu-file-exit();
+                }
+                shortcut: @keys(Alt + F4);
+            }
+        }
+
+        Menu {
+            title: "Help";
+            MenuItem {
+                title: "About";
+                activated => {
+                    menu-help-about();
+                }
+            }
+        }
+    }
+
+    callback menu-file-load();
+    callback menu-file-unload();
+    callback menu-file-exit();
+    callback menu-help-about();
+
+    in-out property <[MibNode]> mib_tree_model: [{
+        name: "iso",
+        oid: ".1",
+        indent: 0,
+        is_expanded: true,
+        has_children: false,
+    }];
+
+    in-out property <MibPropertyValues> current_mib_properties: {
+        name: "",
+        oid: "",
+        mib_module: "",
+        syntax: "",
+        access: "",
+        status: "",
+        defval: "",
+        indexes: "",
+        descr: "",
+    };
+
+    in-out property <[string]> host_profiles: ["localhost"];
+    in-out property <string> active_profile: "localhost";
+
+    callback host_selected(string);
+
+    VerticalLayout {
+        HorizontalBox {
+            height: 36pt;
+            spacing: 8pt;
+            Text {
+                text: "Host";
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+
+            ComboBox {
+                model: root.host_profiles;
+                current-value: root.active_profile;
+                selected(val) => {
+                    root.active_profile = val;
+                    root.host_selected(val);
+                }
+                width: 144pt;
+            }
+
+            Button {
+                text: "Host Config";
+                clicked => {
+                    open_host_config();
+                }
+            }
+
+            Rectangle {
+                width: 1px;
+                background: Colors.lightgray;
+            }
+
+            Text {
+                text: "OID";
+                vertical-alignment: TextVerticalAlignment.center;
+            }
+
+            toolbar_oid := LineEdit {
+                text: "";
+                horizontal-stretch: 1;
+            }
+
+            ComboBox {
+                model: ["GET", "GET NEXT", "SET", "WALK"];
+                width: 96pt;
+            }
+
+            Button {
+                text: "Go!";
+            }
+        }
+
+        HorizontalLayout {
+            min-height: 432pt;
+            VerticalBox {
+                horizontal-stretch: 1;
+                max-width: 320pt;
+                Text {
+                    text: "MIBs";
+                }
+
+                mib-tree := ListView {
+                    for node[idx] in root.mib_tree_model: HorizontalLayout {
+                        padding-left: node.indent * 16pt;
+                        height: 16pt;
+
+                        HorizontalLayout {
+                            alignment: start;
+                            TouchArea {
+                                width: self.preferred-width;
+                                clicked => {
+                                    toggle_mib_tree_element(idx);
+                                }
+                                Text {
+                                    text: node.has-children ? (node.is_expanded ? "▼ " : "▶ ") : "   ";
+                                }
+                            }
+
+                            TouchArea {
+                                horizontal-stretch: 1;
+                                clicked => {
+                                    click_mib_tree_element(idx);
+                                    toolbar_oid.text = root.current_mib_properties.oid;
+                                }
+                                Text {
+                                    text: node.name;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                Rectangle {
+                    height: 1px;
+                    background: Colors.lightgray;
+                }
+
+                ScrollView {
+                    height: 192pt;
+                    oid-properties := GridLayout {
+                        spacing: 8pt;
+
+                        Row {
+                            Text {
+                                text: "Name";
+                                width: 48pt;
+                            }
+
+                            TextInput {
+                                text: root.current_mib_properties.name;
+                                read-only: true;
+                            }
+                        }
+
+                        Row {
+                            Text {
+                                text: "OID";
+                                width: 48pt;
+                            }
+
+                            TextInput {
+                                text: root.current_mib_properties.oid;
+                                read-only: true;
+                            }
+                        }
+
+                        Row {
+                            Text {
+                                text: "MIB";
+                                width: 48pt;
+                            }
+
+                            TextInput {
+                                text: root.current_mib_properties.mib_module;
+                                read-only: true;
+                            }
+                        }
+
+                        Row {
+                            Text {
+                                text: "Syntax";
+                                width: 48pt;
+                            }
+
+                            TextInput {
+                                text: root.current_mib_properties.syntax;
+                                read-only: true;
+                            }
+                        }
+
+                        Row {
+                            Text {
+                                text: "Access";
+                                width: 48pt;
+                            }
+
+                            TextInput {
+                                text: root.current_mib_properties.access;
+                                read-only: true;
+                            }
+                        }
+
+                        Row {
+                            Text {
+                                text: "Status";
+                                width: 48pt;
+                            }
+
+                            TextInput {
+                                text: root.current_mib_properties.status;
+                                read-only: true;
+                            }
+                        }
+
+                        Row {
+                            Text {
+                                text: "DefVal";
+                                width: 48pt;
+                            }
+
+                            TextInput {
+                                text: root.current_mib_properties.defval;
+                                read-only: true;
+                            }
+                        }
+
+                        Row {
+                            Text {
+                                text: "Indexes";
+                                width: 48pt;
+                            }
+
+                            TextInput {
+                                text: root.current_mib_properties.indexes;
+                                read-only: true;
+                            }
+                        }
+
+                        Row {
+                            Text {
+                                text: "Descr";
+                                width: 48pt;
+                            }
+
+                            TextInput {
+                                text: root.current_mib_properties.descr;
+                                horizontal-alignment: start;
+                                read-only: true;
+                                wrap: word-wrap;
+                            }
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: 1px;
+                background: Colors.lightgray;
+            }
+
+            StandardListView { }
+        }
+    }
+
+    callback open_host_config();
+    callback click_mib_tree_element(int);
+    callback toggle_mib_tree_element(int);
+}
+
+export component HelpAboutDialog inherits Dialog { // 改用 Window
+    title: "About";
+    VerticalLayout {
+        Text {
+            text: "mib-browser-rs v0.0.1";
+        }
+
+        AboutSlint { }
+
+        Button {
+            text: "OK";
+            clicked => {
+                root.close();
+            }
+        }
+    }
+
+    callback close();
+}
+
+struct HostProfile {
+    name: string,
+    host: string,
+    version: string,        // 1, 2c, 3
+    community: string,
+
+    // v3 specific
+    security_engine_id: string,
+    security_level: string, // noAuthNoPriv|authNoPriv|authPriv
+    auth_protocol: string,      // md5|sha|sha224|sha256|sha384|sha512
+    auth_passphrase: string,
+    privacy_protocol: string,   // des|aes|aes192|aes256|3des
+    privacy_passphrase: string,
+}
+
+export component HostConfigWindow inherits Window {
+    title: "Host Config";
+    min-width: 640pt;
+    min-height: 480pt;
+
+    in property <[HostProfile]> profiles;
+    in-out property <int> current_profile_index: -1;
+    in-out property <HostProfile> current_profile;
+
+    VerticalLayout {
+        horizontal-stretch: 1;
+        vertical-stretch: 1;
+
+        HorizontalBox {
+            VerticalLayout {
+                horizontal-stretch: 1;
+                Text {
+                    text: "Profiles";
+                    font-weight: FontWeight.bold;
+                }
+
+                host_config_profile_listview := ListView {
+                    for profile[idx] in root.profiles: Rectangle {
+                        height: 24pt;
+                        background: root.current_profile_index == idx ? Colors.lightblue : Colors.transparent;
+                        TouchArea {
+                            clicked => {
+                                root.current_profile_index = idx;
+                                root.current_profile = profile;
+                                root.host_config_click_profile(idx);
+                            }
+                        }
+
+                        Text {
+                            text: profile.name;
+                            color: root.current_profile_index == idx ? Colors.black : Colors.black;
+                            vertical-alignment: center;
+                            x: 4pt;
+                        }
+                    }
+                }
+
+                HorizontalBox {
+                    Button {
+                        text: "New";
+                        width: 72pt;
+                        clicked => {
+                            root.host_config_profile_new();
+                        }
+                    }
+
+                    Button {
+                        text: "Delete";
+                        width: 72pt;
+                        clicked => {
+                            root.host_config_profile_delete();
+                        }
+                    }
+
+                    Button {
+                        text: "Duplicate";
+                        width: 72pt;
+                        clicked => {
+                            root.host_config_profile_duplicate();
+                        }
+                    }
+                }
+            }
+
+            Rectangle {
+                width: 1px;
+                background: Colors.lightgray;
+            }
+
+            GridBox {
+                horizontal-stretch: 1;
+                Row {
+                    Text {
+                        width: 72pt;
+                        vertical-alignment: center;
+                        text: "Name";
+                    }
+
+                    LineEdit {
+                        placeholder-text: "Profile name";
+                        text <=> root.current_profile.name;
+                    }
+                }
+
+                Row {
+                    Text {
+                        width: 72pt;
+                        vertical-alignment: center;
+                        text: "Host";
+                    }
+
+                    LineEdit {
+                        placeholder-text: "host:port";
+                        text <=> root.current_profile.host;
+                    }
+                }
+
+                Row {
+                    Text {
+                        width: 72pt;
+                        vertical-alignment: center;
+                        text: "Version";
+                    }
+
+                    ComboBox {
+                        model: ["1", "2c", "3"];
+                        current-value <=> root.current_profile.version;
+                    }
+                }
+
+                Row {
+                    Text { }
+                }
+
+                Row {
+                    Rectangle {
+                        height: 1px;
+                        background: Colors.lightgray;
+                        colspan: 2;
+                    }
+                }
+
+                Row {
+                    Text {
+                        text: "SNMPv2c specific settings";
+                        font-weight: FontWeight.bold;
+                    }
+                }
+
+                Row {
+                    Text {
+                        width: 72pt;
+                        vertical-alignment: center;
+                        text: "Community";
+                    }
+
+                    LineEdit {
+                        placeholder-text: "community";
+                        text <=> root.current_profile.community;
+                    }
+                }
+
+                Row {
+                    Text { }
+                }
+
+                Row {
+                    Rectangle {
+                        colspan: 2;
+                        height: 1px;
+                        background: Colors.lightgray;
+                    }
+                }
+
+                Row {
+                    Text {
+                        text: "SNMPv3 specific settings";
+                        font-weight: FontWeight.bold;
+                    }
+                }
+
+                Row {
+                    Text {
+                        width: 84pt;
+                        vertical-alignment: center;
+                        text: "Security Engine ID";
+                    }
+
+                    LineEdit {
+                        text <=> root.current_profile.security_engine_id;
+                    }
+                }
+
+                Row {
+                    Text {
+                        width: 84pt;
+                        vertical-alignment: center;
+                        text: "Security Level";
+                    }
+
+                    ComboBox {
+                        model: ["noAuthNoPriv", "authNoPriv", "authPriv"];
+                        current-value <=> root.current_profile.security_level;
+                    }
+                }
+
+                Row {
+                    Text {
+                        width: 84pt;
+                        vertical-alignment: center;
+                        text: "Auth Protocol";
+                    }
+
+                    ComboBox {
+                        model: ["md5", "sha", "sha224", "sha256", "sha384", "sha512"];
+                        current-value <=> root.current_profile.auth_protocol;
+                    }
+                }
+
+                Row {
+                    Text {
+                        width: 84pt;
+                        vertical-alignment: center;
+                        text: "Auth Passphrase";
+                    }
+
+                    LineEdit {
+                        placeholder-text: "Authentication passphrase";
+                        text <=> root.current_profile.auth_passphrase;
+                    }
+                }
+
+                Row {
+                    Text {
+                        width: 84pt;
+                        vertical-alignment: center;
+                        text: "Privacy Protocol";
+                    }
+
+                    ComboBox {
+                        model: ["des", "aes", "aes192", "aes256", "3des"];
+                        current-value <=> root.current_profile.privacy_protocol;
+                    }
+                }
+
+                Row {
+                    Text {
+                        width: 84pt;
+                        vertical-alignment: center;
+                        text: "Privacy Passphrase";
+                    }
+
+                    LineEdit {
+                        placeholder-text: "Privacy passphrase";
+                        text <=> root.current_profile.privacy_passphrase;
+                    }
+                }
+
+                Rectangle {
+                    min-width: 16px;
+                    min-height: 16px; /* @lsp:ignore-node */ }
+            }
+        }
+
+        HorizontalBox {
+            width: 100%;
+            height: 36pt;
+            alignment: end;
+
+            ok_button := Button {
+                text: "OK";
+                clicked => {
+                    host_config_ok();
+                }
+            }
+
+            Button {
+                text: "Cancel";
+                clicked => {
+                    host_config_close();
+                }
+            }
+
+            Button {
+                text: "Apply";
+                clicked => {
+                    host_config_apply();
+                }
+            }
+        }
+    }
+
+    callback host_config_profile_new();
+    callback host_config_profile_delete();
+    callback host_config_profile_duplicate();
+    callback host_config_click_profile(int);
+
+    callback host_config_ok();
+    callback host_config_close();
+    callback host_config_apply();
+}
+
+export component UnloadMibDialog inherits Dialog {
+    title: "Unload MIBs";
+    min-width: 600pt;
+    min-height: 400pt;
+
+    in-out property <[UnloadMibItem]> loaded_mibs: [];
+
+    callback do_unload([UnloadMibItem]);
+    callback close_dialog();
+
+    VerticalBox {
+        ListView {
+            for item[idx] in root.loaded_mibs: HorizontalLayout {
+                height: 24pt;
+                spacing: 8pt;
+                CheckBox {
+                    checked: item.checked;
+                    toggled => {
+                        root.loaded_mibs[idx].checked = self.checked;
+                    }
+                }
+
+                Text {
+                    text: item.path;
+                    vertical-alignment: TextVerticalAlignment.center;
+                }
+            }
+        }
+
+        HorizontalLayout {
+            spacing: 8pt;
+            Button {
+                text: "Unload Selected";
+                clicked => {
+                    root.do-unload(root.loaded_mibs);
+                }
+            }
+
+            Button {
+                text: "Close";
+                clicked => {
+                    root.close-dialog();
+                }
+            }
+        }
+    }
+}
