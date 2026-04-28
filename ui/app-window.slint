@@ -14,6 +14,7 @@ import {
 } from "std-widgets.slint";
 
 struct MibNode {
+    tree_name: string,
     name: string,
     oid: string,
     indent: int,
@@ -89,13 +90,27 @@ export component AppWindow inherits Window {
     callback menu-file-exit();
     callback menu-help-about();
 
-    in-out property <[MibNode]> mib_tree_model: [{
-        name: "iso",
-        oid: ".1",
-        indent: 0,
-        is_expanded: true,
-        has_children: false,
-    }];
+    in-out property <[MibNode]> mib_tree_model: [
+        {
+            tree_name: "iso (1)",
+            name: "iso",
+            oid: ".1",
+            indent: 0,
+            is_expanded: true,
+            has_children: false,
+        }
+    ];
+
+    // SNMP result table row example:
+    // {
+    //     host: "cisco.lan",
+    //     name: "sysDescr",
+    //     oid: ".1.3.6.1.2.1.1.1.0",
+    //     value: "SG300-28PP 28-Port Gigabit PoE+ Managed Switch",
+    //     value_type: "OctetString",
+    //     rx_time_iso8601: "2026-01-23T04:05:06Z",
+    // }
+    in-out property <[SNMPResultRow]> snmp_result_rows: [];
 
     in-out property <MibPropertyValues> current_mib_properties: {
         name: "",
@@ -165,6 +180,12 @@ export component AppWindow inherits Window {
             }
         }
 
+        HorizontalBox {
+            Text {
+                text: "Trap";
+            }
+        }
+
         HorizontalLayout {
             min-height: 432pt;
             VerticalBox {
@@ -198,7 +219,7 @@ export component AppWindow inherits Window {
                                     toolbar_oid.text = root.current_mib_properties.oid;
                                 }
                                 Text {
-                                    text: node.name;
+                                    text: node.tree_name;
                                 }
                             }
                         }
@@ -370,6 +391,7 @@ struct HostProfile {
 
     // v3 specific
     security_engine_id: string,
+    context_engine_id: string,
     security_level: string, // noAuthNoPriv|authNoPriv|authPriv
     auth_protocol: string,      // md5|sha|sha224|sha256|sha384|sha512
     auth_passphrase: string,
@@ -559,6 +581,21 @@ export component HostConfigWindow inherits Window {
                     Text {
                         width: 84pt;
                         vertical-alignment: center;
+                        text: "Context Engine ID";
+                    }
+
+                    LineEdit {
+                        text <=> root.current_profile.context_engine_id;
+                        edited(s) => {
+                            host_config_context_engine_id_changed(s);
+                        }
+                    }
+                }
+
+                Row {
+                    Text {
+                        width: 84pt;
+                        vertical-alignment: center;
                         text: "Security Level";
                     }
 
@@ -658,6 +695,9 @@ export component HostConfigWindow inherits Window {
     callback host_config_profile_delete();
     callback host_config_profile_duplicate();
     callback host_config_click_profile(int);
+
+    callback host_config_security_engine_id_changed(string);
+    callback host_config_context_engine_id_changed(string);
 
     callback host_config_ok();
     callback host_config_close();

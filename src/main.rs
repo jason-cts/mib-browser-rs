@@ -20,6 +20,7 @@ struct Profile {
     version: String,
     community: String,
     security_engine_id: String,
+    context_engine_id: String,
     security_level: String,
     auth_protocol: String,
     auth_passphrase: String,
@@ -91,6 +92,7 @@ fn load_config() -> Config {
                         profile.version = get_str("version");
                         profile.community = get_str("community");
                         profile.security_engine_id = get_str("security_engine_id");
+                        profile.context_engine_id = get_str("context_engine_id");
                         profile.security_level = get_str("security_level");
                         profile.auth_protocol = get_str("auth-proto");
                         profile.auth_passphrase = get_str("auth-key");
@@ -137,6 +139,7 @@ fn save_config(config: &Config) {
         insert_str("version", &p.version);
         insert_str("community", &p.community);
         insert_str("security_engine_id", &p.security_engine_id);
+        insert_str("context_engine_id", &p.context_engine_id);
         insert_str("security_level", &p.security_level);
         insert_str("auth-proto", &p.auth_protocol);
         insert_str("auth-key", &p.auth_passphrase);
@@ -192,7 +195,9 @@ struct TreeItem {
 
 impl TreeItem {
     fn to_mib_node(&self) -> MibNode {
+        let oid_last_part = self.oid.split('.').last().unwrap_or("");
         MibNode {
+            tree_name: format!("{} ({})", self.name, oid_last_part).into(),
             name: self.name.clone().into(),
             oid: self.oid.clone().into(),
             indent: self.indent,
@@ -259,10 +264,7 @@ fn build_mib_tree(mib_paths: &[String]) -> Vec<TreeItem> {
                 .module()
                 .map(|m| m.name().to_string())
                 .unwrap_or_default(),
-            status: node
-                .status()
-                .map(|s| format!("{:?}", s).to_lowercase())
-                .unwrap_or_default(),
+            status: "".to_string(),
             ..Default::default()
         };
 
@@ -273,6 +275,15 @@ fn build_mib_tree(mib_paths: &[String]) -> Vec<TreeItem> {
 
         // If node has an attached OBJECT-TYPE, extract more details.
         if let Some(obj) = node.object() {
+            let status = obj.status();
+            info.status = match status {
+                mib_rs::Status::Mandatory => "Mandatory".to_string(),
+                mib_rs::Status::Optional => "Optional".to_string(),
+                mib_rs::Status::Current => "Current".to_string(),
+                mib_rs::Status::Deprecated => "Deprecated".to_string(),
+                mib_rs::Status::Obsolete => "Obsolete".to_string(),
+            };
+
             let access = obj.access();
             info.access = format!("{:?}", access);
 
@@ -295,6 +306,10 @@ fn build_mib_tree(mib_paths: &[String]) -> Vec<TreeItem> {
                     .iter()
                     .map(|r| format!("{}..{}", r.min, r.max))
                     .collect();
+                let enums: Vec<String> = obj.effective_enums()
+                    .iter()
+                    .map(|e| format!("{}({})", e.label, e.value))
+                    .collect();
 
                 let mut syntax = if type_name != base_name {
                     format!("{} ({})", type_name, base_name)
@@ -307,6 +322,9 @@ fn build_mib_tree(mib_paths: &[String]) -> Vec<TreeItem> {
                 }
                 if !ranges.is_empty() {
                     syntax.push_str(&format!(" ({})", ranges.join(" | ")));
+                }
+                if !enums.is_empty() {
+                    syntax.push_str(&format!(" {{{}}}", enums.join(", ")));
                 }
                 info.syntax = syntax;
             }
@@ -602,6 +620,13 @@ async fn main() -> Result<(), Box<dyn Error>> {
         });
     });
 
+    fn sync_main_window_profiles(ui: &AppWindow, cfg: &Config) {
+        let profile_names: Vec<slint::SharedString> = cfg.profiles.iter().map(|p| p.name.clone().into()).collect();
+        let new_model = Rc::new(slint::VecModel::from(profile_names));
+        ui.set_host_profiles(new_model.into());
+        ui.set_active_profile(cfg.active_profile.clone().into());
+    }
+
     let config_for_host_window = config.clone();
     let ui_weak_for_host = ui.as_weak();
 
@@ -615,6 +640,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 version: p.version.clone().into(),
                 community: p.community.clone().into(),
                 security_engine_id: p.security_engine_id.clone().into(),
+                context_engine_id: p.context_engine_id.clone().into(),
                 security_level: p.security_level.clone().into(),
                 auth_protocol: p.auth_protocol.clone().into(),
                 auth_passphrase: p.auth_passphrase.clone().into(),
@@ -639,24 +665,32 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     
                     {
                         let mut cfg = config_for_apply.borrow_mut();
+                        let mut check_active_profile = false;
                         if let Some(p) = cfg.profiles.get_mut(current_idx as usize) {
+                            let old_name = p.name.clone();
                             p.name = current_profile.name.to_string();
-                        p.host = current_profile.host.to_string();
-                        p.version = current_profile.version.to_string();
-                        p.community = current_profile.community.to_string();
-                        p.security_engine_id = current_profile.security_engine_id.to_string();
-                        p.security_level = current_profile.security_level.to_string();
-                        p.auth_protocol = current_profile.auth_protocol.to_string();
-                        p.auth_passphrase = current_profile.auth_passphrase.to_string();
-                        p.privacy_protocol = current_profile.privacy_protocol.to_string();
+                            p.host = current_profile.host.to_string();
+                            p.version = current_profile.version.to_string();
+                            p.community = current_profile.community.to_string();
+                            p.security_engine_id = current_profile.security_engine_id.to_string();
+                            p.context_engine_id = current_profile.context_engine_id.to_string();
+                            p.security_level = current_profile.security_level.to_string();
+                            p.auth_protocol = current_profile.auth_protocol.to_string();
+                            p.auth_passphrase = current_profile.auth_passphrase.to_string();
+                            p.privacy_protocol = current_profile.privacy_protocol.to_string();
                             p.privacy_passphrase = current_profile.privacy_passphrase.to_string();
+                            
+                            if old_name != p.name {
+                                check_active_profile = cfg.active_profile == old_name;
+                            }
+                        }
+                        if check_active_profile {
+                            cfg.active_profile = current_profile.name.to_string();
                         }
                         save_config(&cfg);
                         
                         if let Some(ui) = ui_weak_for_apply.upgrade() {
-                            let profile_names: Vec<slint::SharedString> = cfg.profiles.iter().map(|p| p.name.clone().into()).collect();
-                            let new_model = Rc::new(slint::VecModel::from(profile_names));
-                            ui.set_host_profiles(new_model.into());
+                            sync_main_window_profiles(&ui, &cfg);
                         }
                     }
                 }
@@ -681,6 +715,138 @@ async fn main() -> Result<(), Box<dyn Error>> {
         host_config_window.on_host_config_close(move || {
             if let Some(hcw) = host_config_window_weak_for_close.upgrade() {
                 hcw.hide().unwrap();
+            }
+        });
+
+        host_config_window.on_host_config_profile_new({
+            let hcw_weak = host_config_window.as_weak();
+            let profiles_model = profiles_model.clone();
+            let config = config_for_host_window.clone();
+            let ui_weak = ui_weak_for_host.clone();
+            move || {
+                let mut cfg = config.borrow_mut();
+                let new_profile = Profile {
+                    name: "Unnamed Profile".to_string(),
+                    ..Default::default()
+                };
+                cfg.profiles.push(new_profile.clone());
+                
+                let slint_profile = HostProfile {
+                    name: new_profile.name.into(),
+                    host: new_profile.host.into(),
+                    version: new_profile.version.into(),
+                    community: new_profile.community.into(),
+                    security_engine_id: new_profile.security_engine_id.into(),
+                    context_engine_id: new_profile.context_engine_id.into(),
+                    security_level: new_profile.security_level.into(),
+                    auth_protocol: new_profile.auth_protocol.into(),
+                    auth_passphrase: new_profile.auth_passphrase.into(),
+                    privacy_protocol: new_profile.privacy_protocol.into(),
+                    privacy_passphrase: new_profile.privacy_passphrase.into(),
+                };
+                profiles_model.push(slint_profile.clone());
+                
+                if let Some(hcw) = hcw_weak.upgrade() {
+                    let new_idx = (profiles_model.row_count() - 1) as i32;
+                    hcw.set_current_profile_index(new_idx);
+                    hcw.set_current_profile(slint_profile);
+                }
+                
+                save_config(&cfg);
+                if let Some(ui) = ui_weak.upgrade() {
+                    sync_main_window_profiles(&ui, &cfg);
+                }
+            }
+        });
+
+        host_config_window.on_host_config_profile_delete({
+            let hcw_weak = host_config_window.as_weak();
+            let profiles_model = profiles_model.clone();
+            let config = config_for_host_window.clone();
+            let ui_weak = ui_weak_for_host.clone();
+            move || {
+                if let Some(hcw) = hcw_weak.upgrade() {
+                    let idx = hcw.get_current_profile_index();
+                    if idx >= 0 && idx < profiles_model.row_count() as i32 {
+                        let mut cfg = config.borrow_mut();
+                        
+                        // Check if we are deleting the active profile
+                        let deleting_active = cfg.profiles[idx as usize].name == cfg.active_profile;
+                        
+                        cfg.profiles.remove(idx as usize);
+                        profiles_model.remove(idx as usize);
+                        
+                        let new_count = profiles_model.row_count();
+                        if new_count == 0 {
+                            hcw.set_current_profile_index(-1);
+                            hcw.set_current_profile(HostProfile::default());
+                            if deleting_active {
+                                cfg.active_profile = String::new();
+                            }
+                        } else {
+                            let new_idx = if idx >= new_count as i32 {
+                                (new_count - 1) as i32
+                            } else {
+                                idx
+                            };
+                            hcw.set_current_profile_index(new_idx);
+                            hcw.set_current_profile(profiles_model.row_data(new_idx as usize).unwrap());
+                            
+                            if deleting_active {
+                                cfg.active_profile = cfg.profiles[new_idx as usize].name.clone();
+                            }
+                        }
+                        
+                        save_config(&cfg);
+                        if let Some(ui) = ui_weak.upgrade() {
+                            sync_main_window_profiles(&ui, &cfg);
+                        }
+                    }
+                }
+            }
+        });
+
+        host_config_window.on_host_config_profile_duplicate({
+            let hcw_weak = host_config_window.as_weak();
+            let profiles_model = profiles_model.clone();
+            let config = config_for_host_window.clone();
+            let ui_weak = ui_weak_for_host.clone();
+            move || {
+                if let Some(hcw) = hcw_weak.upgrade() {
+                    let idx = hcw.get_current_profile_index();
+                    if idx >= 0 && idx < profiles_model.row_count() as i32 {
+                        let mut cfg = config.borrow_mut();
+                        let source_prof = cfg.profiles[idx as usize].clone();
+                        let mut new_prof = source_prof.clone();
+                        new_prof.name = format!("Duplicated of {}", source_prof.name);
+                        
+                        let insert_idx = (idx + 1) as usize;
+                        cfg.profiles.insert(insert_idx, new_prof.clone());
+                        
+                        let slint_prof = HostProfile {
+                            name: new_prof.name.into(),
+                            host: new_prof.host.into(),
+                            version: new_prof.version.into(),
+                            community: new_prof.community.into(),
+                            security_engine_id: new_prof.security_engine_id.into(),
+                            context_engine_id: new_prof.context_engine_id.into(),
+                            security_level: new_prof.security_level.into(),
+                            auth_protocol: new_prof.auth_protocol.into(),
+                            auth_passphrase: new_prof.auth_passphrase.into(),
+                            privacy_protocol: new_prof.privacy_protocol.into(),
+                            privacy_passphrase: new_prof.privacy_passphrase.into(),
+                        };
+                        profiles_model.insert(insert_idx, slint_prof.clone());
+                        
+                        hcw.set_current_profile_index(insert_idx as i32);
+                        hcw.set_current_profile(slint_prof);
+                        
+                        save_config(&cfg);
+                        if let Some(ui) = ui_weak.upgrade() {
+                            sync_main_window_profiles(&ui, &cfg);
+                        }
+                    }
+                }
             }
         });
 
