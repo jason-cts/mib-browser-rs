@@ -17,7 +17,7 @@ futures = "0.3.31"
 hex = { version = "0.4.3", features = ["serde"] }
 mac_address = "1.1.5"
 bytemuck = { version = "1.22.0", features = ["derive"] }
-snmp2 = { version = "0.4.8", features = ["full"] }
+snmp2 = { version = "0.5.0", features = ["full", "crypto-rust"] }
 rasn-smi = "0.28.12"
 mib-rs = "0.8"
 rfd = "0.17.2"
