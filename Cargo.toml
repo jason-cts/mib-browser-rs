@@ -30,4 +30,6 @@ slint-build = "1.14.1"
 
 [profile.release]
 codegen-units = 1
-lto = true
+lto = "fat"
+opt-level = 3
+strip = "symbols"
