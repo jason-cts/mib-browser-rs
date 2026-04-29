@@ -363,7 +363,7 @@ fn build_mib_tree(mib_paths: &[String]) -> Vec<TreeItem> {
 
             if oid.starts_with(&[1, 3, 6, 1, 6, 3, 1, 1, 5]) {
                 // generic trap
-                info.descr = format!("Generic trap ID: {}\n\n{}", oid.last().unwrap(), descr);
+                info.descr = format!("v1 Generic trap ID: {}\n\n{}", oid.last().unwrap(), descr);
 
                 trap_tree.push(TreeItem {
                     name: node.name().to_string(),
@@ -376,8 +376,19 @@ fn build_mib_tree(mib_paths: &[String]) -> Vec<TreeItem> {
 
             } else if oid.starts_with(&[1, 3, 6, 1, 4, 1]) {
                 // enterprise trap, generic trap ID always is 6
-                info.descr = format!("Generic trap ID: 6\nSpecific trap ID: {}\n\n{}", oid.last().unwrap(), descr);
+                info.descr = format!("v1 Generic trap ID: 6\nv1 Specific trap ID: {}\n\n{}", oid.last().unwrap(), descr);
 
+                trap_tree.push(TreeItem {
+                    name: node.name().to_string(),
+                    oid: oid.to_string(),
+                    indent: 1,
+                    has_children: false,
+                    is_expanded: false,
+                    info: info.clone()
+                });
+            } else {
+                // other trap, treated as v2 notification for now
+                info.descr = descr;
                 trap_tree.push(TreeItem {
                     name: node.name().to_string(),
                     oid: oid.to_string(),
