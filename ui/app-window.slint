@@ -300,6 +300,7 @@ export component AppWindow inherits Window {
 
                             TextInput {
                                 text: root.current_mib_properties.syntax;
+                                wrap: TextWrap.word-wrap;
                                 read-only: true;
                             }
                         }
@@ -348,6 +349,7 @@ export component AppWindow inherits Window {
 
                             TextInput {
                                 text: root.current_mib_properties.indexes;
+                                wrap: TextWrap.word-wrap;
                                 read-only: true;
                             }
                         }

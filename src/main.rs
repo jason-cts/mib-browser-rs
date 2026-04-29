@@ -246,10 +246,20 @@ fn build_mib_tree(mib_paths: &[String]) -> Vec<TreeItem> {
     // Walk the OID tree starting from the root, depth-first.
     let root = mib.root_node();
 
+    let mut trap_tree: Vec<TreeItem> = vec![TreeItem {
+        name: "SNMP Traps / Notifications".to_string(),
+        oid: "".to_string(),
+        indent: 0,
+        has_children: true,
+        is_expanded: true,
+        info: MibInfo { name: "SNMP Traps / Notifications".to_string(), oid: "".to_string(), mib_module: "".to_string(), syntax: "".to_string(), access: "".to_string(), status: "".to_string(), defval: "".to_string(), indexes: "".to_string(), descr: "".to_string() }
+    }];
+
     fn walk(
         node: mib_rs::mib::handle::Node<'_>,
         depth: i32,
         all_items: &mut Vec<TreeItem>,
+        trap_tree: &mut Vec<TreeItem>,
     ) {
         let oid_str = format!(".{}", node.oid());
         let has_children = node.children().next().is_some();
@@ -346,25 +356,59 @@ fn build_mib_tree(mib_paths: &[String]) -> Vec<TreeItem> {
             }
         }
 
+        if let Some(n) = node.notification() {
+            let oid = node.oid();
+            let mut info = info.clone();
+            let descr = n.description().split('\n').map(|l| l.trim()).collect::<Vec<&str>>().join("\n");
+
+            if oid.starts_with(&[1, 3, 6, 1, 6, 3, 1, 1, 5]) {
+                // generic trap
+                info.descr = format!("Generic trap ID: {}\n\n{}", oid.last().unwrap(), descr);
+
+                trap_tree.push(TreeItem {
+                    name: node.name().to_string(),
+                    oid: oid.to_string(),
+                    indent: 1,
+                    has_children: false,
+                    is_expanded: false,
+                    info: info,
+                });
+
+            } else if oid.starts_with(&[1, 3, 6, 1, 4, 1]) {
+                // enterprise trap, generic trap ID always is 6
+                info.descr = format!("Generic trap ID: 6\nSpecific trap ID: {}\n\n{}", oid.last().unwrap(), descr);
+
+                trap_tree.push(TreeItem {
+                    name: node.name().to_string(),
+                    oid: oid.to_string(),
+                    indent: 1,
+                    has_children: false,
+                    is_expanded: false,
+                    info: info.clone()
+                });
+            }
+        }
+
         all_items.push(TreeItem {
             name,
             oid: oid_str,
             indent: depth,
-            is_expanded: depth < 3,
+            is_expanded: depth < 4,
             has_children,
             info,
         });
 
         for child in node.children() {
-            walk(child, depth + 1, all_items);
+            walk(child, depth + 1, all_items, trap_tree);
         }
     }
 
     // Start with root's children so we skip the synthetic root node itself.
     for child in root.children() {
-        walk(child, 0, &mut all_items);
+        walk(child, 0, &mut all_items, &mut trap_tree);
     }
 
+    all_items.append(&mut trap_tree);
     all_items
 }
 
