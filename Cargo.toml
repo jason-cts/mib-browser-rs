@@ -2,6 +2,7 @@
 name = "mib-browser-rs"
 version = "0.1.0"
 edition = "2024"
+license = "BSD-3-Clause"
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 
@@ -9,21 +10,14 @@ edition = "2024"
 slint = "1.14.1"
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-envy = "0.4.2"
-uuid = { version = "1.11.0", features = ["v4", "v7"] }
 yaml-rust2 = { version = "0.10", package = "yaml-rust2" }
 tokio = { version = "1.44", features = ["full"] }
-futures = "0.3.31"
 hex = { version = "0.4.3", features = ["serde"] }
-mac_address = "1.1.5"
-bytemuck = { version = "1.22.0", features = ["derive"] }
 snmp2 = { version = "0.5.0", features = ["full", "crypto-rust"] }
-rasn-smi = "0.28.12"
 mib-rs = "0.8"
 rfd = "0.17.2"
 tracing = "0.1.44"
-tracing-subscriber = { version = "0.3.23", features = ["env-filter"] }
-rasn = "0.28.12"
+tracing-subscriber = "0.3.23"
 
 [build-dependencies]
 slint-build = "1.14.1"
