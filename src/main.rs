@@ -1,10 +1,12 @@
 // Prevent console window in addition to Slint window in Windows release builds when, e.g., starting the app via file manager. Ignored on other platforms.
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
-use std::{cell::RefCell, error::Error, fs, path::Path, process, rc::Rc};
+use std::{cell::RefCell, error::Error, fs, path::Path, process, rc::Rc, time::{Duration, SystemTime, UNIX_EPOCH}};
 
+use hex::ToHex;
 use mib_rs::Loader;
 use slint::Model;
+use snmp2::{Oid, SyncSession, Value as SnmpValue};
 use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 
 slint::include_modules!();
@@ -293,7 +295,7 @@ fn build_mib_tree(mib_paths: &[String]) -> Vec<TreeItem> {
             }
 
             if let Some(ty) = obj.ty() {
-                // Build syntax string like "DisplayString (OCTET STRING) (SIZE 0..255)"
+                // Build syntax string like "DisplayString (OctetString) (SIZE 0..255)"
                 let type_name = ty.name().to_string();
                 let base_name = format!("{:?}", ty.effective_base());
                 let sizes: Vec<String> = ty
@@ -392,6 +394,357 @@ fn get_visible_items(all_items: &[TreeItem]) -> (Vec<MibNode>, Vec<usize>) {
 }
 
 // ---------------------------------------------------------------------------
+// SNMP helpers
+// ---------------------------------------------------------------------------
+
+/// Parse a dotted OID string like ".1.3.6.1.2.1.1.1.0" into Vec<u64>.
+fn parse_oid_str(s: &str) -> Option<Vec<u64>> {
+    let s = s.trim().trim_start_matches('.');
+    if s.is_empty() {
+        return None;
+    }
+    s.split('.').map(|p| p.parse::<u64>().ok()).collect()
+}
+
+/// Map a MIB syntax string to one of the SNMPSetDialog ComboBox option values.
+fn syntax_to_snmp_type(syntax: &str) -> &'static str {
+    let lower = syntax.to_lowercase();
+    if lower.contains("counter64") {
+        "unsigned int64"
+    } else if lower.contains("integer") {
+        "INTEGER"
+    } else if lower.contains("counter") || lower.contains("gauge") || lower.contains("unsigned32") {
+        "unsigned INTEGER"
+    } else if lower.contains("timeticks") {
+        "TIMETICKS"
+    } else if lower.contains("ipaddress") {
+        "IPADDRESS"
+    } else if lower.contains("object identifier") || lower.contains("objectidentifier") {
+        "OID"
+    } else {
+        // OctetString, DisplayString, etc.
+        "STRING"
+    }
+}
+
+/// Return the ComboBox index for a given SNMP type string.
+fn data_type_to_index(s: &str) -> i32 {
+    const TYPES: &[&str] = &[
+        "INTEGER",
+        "unsigned INTEGER",
+        "TIMETICKS",
+        "IPADDRESS",
+        "OID",
+        "STRING",
+        "HEX STRING",
+        "DECIMAL STRING",
+        "BITS",
+        "unsigned int64",
+        "signed int64",
+        "float",
+        "double",
+    ];
+    TYPES.iter().position(|&t| t == s).unwrap_or(5) as i32
+}
+
+fn find_oid_item(all_items: &[TreeItem], oid: &str) -> Option<TreeItem> {
+    let mut current = oid.trim_end_matches('.').to_string();
+    loop {
+        if let Some(item) = all_items.iter().find(|i| i.oid == current) {
+            return Some(item.clone());
+        }
+        match current.rfind('.') {
+            Some(pos) if pos > 0 => current.truncate(pos),
+            _ => break,
+        }
+    }
+    return None
+}
+
+/// Walk up the OID (strip last component each time) to find a MIB item with a
+/// known syntax, then return the mapped SNMP type string.
+fn find_data_type_for_oid(all_items: &[TreeItem], oid: &str) -> String {
+    if let Some(item) = find_oid_item(all_items, oid) {
+        if !item.info.syntax.is_empty() {
+            return syntax_to_snmp_type(&item.info.syntax).to_string();
+        }
+    }
+
+    return "STRING".to_string()
+}
+
+/// Format an Oid as ".1.3.6.1..." (leading dot).
+fn oid_to_dotted(oid: &Oid) -> String {
+    format!(".{}", oid.to_id_string())
+}
+
+/// Human-readable type label for an SNMP value.
+fn value_to_type_str(v: &SnmpValue) -> &'static str {
+    match v {
+        SnmpValue::Boolean(_) => "Boolean",
+        SnmpValue::Null => "Null",
+        SnmpValue::Integer(_) => "INTEGER",
+        SnmpValue::OctetString(_) => "OctetString",
+        SnmpValue::ObjectIdentifier(_) => "OID",
+        SnmpValue::IpAddress(_) => "IpAddress",
+        SnmpValue::Counter32(_) => "Counter32",
+        SnmpValue::Unsigned32(_) => "Unsigned32",
+        SnmpValue::Timeticks(_) => "Timeticks",
+        SnmpValue::Opaque(_) => "Opaque",
+        SnmpValue::Counter64(_) => "Counter64",
+        SnmpValue::EndOfMibView => "EndOfMibView",
+        SnmpValue::NoSuchObject => "NoSuchObject",
+        SnmpValue::NoSuchInstance => "NoSuchInstance",
+        _ => "Unknown",
+    }
+}
+
+/// Format an SNMP value for display.
+fn value_to_display_str(v: &SnmpValue) -> String {
+    match v {
+        SnmpValue::Boolean(b) => b.to_string(),
+        SnmpValue::Null => "(null)".to_string(),
+        SnmpValue::Integer(n) => n.to_string(),
+        SnmpValue::OctetString(bytes) => String::from_utf8_lossy(bytes).into_owned(),
+        SnmpValue::ObjectIdentifier(oid) => format!(".{}", oid.to_id_string()),
+        SnmpValue::IpAddress(a) => format!("{}.{}.{}.{}", a[0], a[1], a[2], a[3]),
+        SnmpValue::Counter32(n) => n.to_string(),
+        SnmpValue::Unsigned32(n) => n.to_string(),
+        SnmpValue::Timeticks(n) => n.to_string(),
+        SnmpValue::Opaque(bytes) => hex::encode(bytes),
+        SnmpValue::Counter64(n) => n.to_string(),
+        SnmpValue::EndOfMibView => "(end of MIB view)".to_string(),
+        SnmpValue::NoSuchObject => "(no such object)".to_string(),
+        SnmpValue::NoSuchInstance => "(no such instance)".to_string(),
+        _ => "(unknown)".to_string(),
+    }
+}
+
+/// Look up the MIB name for a dotted OID. Tries exact match first, then
+/// strips trailing index components until a match is found.
+fn lookup_name_for_oid(all_items: &[TreeItem], dotted_oid: &str) -> String {
+    let mut current = dotted_oid.trim_end_matches('.').to_string();
+    loop {
+        if let Some(item) = all_items.iter().find(|i| i.oid == current) {
+            return item.name.clone();
+        }
+        match current.rfind('.') {
+            Some(pos) if pos > 0 => current.truncate(pos),
+            _ => break,
+        }
+    }
+    String::new()
+}
+
+/// Return current UTC time as "HH:MM:SSZ".
+fn now_time_str() -> String {
+    let secs = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let h = (secs % 86400) / 3600;
+    let m = (secs % 3600) / 60;
+    let s = secs % 60;
+    format!("{:02}:{:02}:{:02}Z", h, m, s)
+}
+
+/// Owned SNMP result row suitable for crossing thread boundaries.
+#[derive(Clone)]
+struct SnmpQueryResult {
+    oid: String,
+    value_type: String,
+    value: String,
+}
+
+/// Build an SNMP session for the given profile.
+fn make_session(profile: &Profile) -> Result<SyncSession, String> {
+    let host = if profile.host.contains(':') {
+        profile.host.clone()
+    } else {
+        format!("{}:161", profile.host)
+    };
+    let community = profile.community.as_bytes().to_vec();
+    let timeout = Some(Duration::from_secs(5));
+
+    let sess = match profile.version.as_str() {
+        "1" => SyncSession::new_v1(host.as_str(), &community, timeout, 0),
+        _ => SyncSession::new_v2c(host.as_str(), &community, timeout, 0),
+    };
+    sess.map_err(|e| format!("connect error: {}", e))
+}
+
+/// Collect varbinds from a PDU into owned results.
+fn collect_pdu_results(pdu: snmp2::Pdu<'_>) -> Vec<SnmpQueryResult> {
+    pdu.varbinds
+        .into_iter()
+        .map(|(oid, val)| SnmpQueryResult {
+            oid: oid_to_dotted(&oid),
+            value_type: value_to_type_str(&val).to_string(),
+            value: value_to_display_str(&val),
+        })
+        .collect()
+}
+
+fn do_snmp_get(profile: Profile, oid_str: String) -> Result<Vec<SnmpQueryResult>, String> {
+    let nums = parse_oid_str(&oid_str).ok_or_else(|| format!("invalid OID: {}", oid_str))?;
+    let oid = Oid::from(&nums).map_err(|e| format!("OID build error: {:?}", e))?;
+    let mut sess = make_session(&profile)?;
+    let pdu = sess.get(&oid).map_err(|e| e.to_string())?;
+    Ok(collect_pdu_results(pdu))
+}
+
+fn do_snmp_getnext(profile: Profile, oid_str: String) -> Result<Vec<SnmpQueryResult>, String> {
+    let nums = parse_oid_str(&oid_str).ok_or_else(|| format!("invalid OID: {}", oid_str))?;
+    let oid = Oid::from(&nums).map_err(|e| format!("OID build error: {:?}", e))?;
+    let mut sess = make_session(&profile)?;
+    let pdu = sess.getnext(&oid).map_err(|e| e.to_string())?;
+    Ok(collect_pdu_results(pdu))
+}
+
+fn do_snmp_walk(profile: Profile, oid_str: String) -> Result<Vec<SnmpQueryResult>, String> {
+    let nums = parse_oid_str(&oid_str).ok_or_else(|| format!("invalid OID: {}", oid_str))?;
+    let base_oid = Oid::from(&nums).map_err(|e| format!("OID build error: {:?}", e))?;
+    let mut sess = make_session(&profile)?;
+
+    let mut results = Vec::new();
+    let mut current: Oid<'static> = base_oid.to_owned();
+
+    loop {
+        let pdu = sess.getnext(&current).map_err(|e| e.to_string())?;
+        let mut varbinds = pdu.varbinds.into_iter();
+        match varbinds.next() {
+            None => break,
+            Some((next_oid, val)) => {
+                match val {
+                    SnmpValue::EndOfMibView
+                    | SnmpValue::NoSuchObject
+                    | SnmpValue::NoSuchInstance => break,
+                    _ => {
+                        if !next_oid.starts_with(&base_oid) {
+                            break;
+                        }
+                        results.push(SnmpQueryResult {
+                            oid: oid_to_dotted(&next_oid),
+                            value_type: value_to_type_str(&val).to_string(),
+                            value: value_to_display_str(&val),
+                        });
+                        current = next_oid.to_owned();
+                    }
+                }
+            }
+        }
+    }
+    Ok(results)
+}
+
+fn do_snmp_set(
+    profile: Profile,
+    oid_str: String,
+    type_str: String,
+    value_str: String,
+) -> Result<Vec<SnmpQueryResult>, String> {
+    let nums = parse_oid_str(&oid_str).ok_or_else(|| format!("invalid OID: {}", oid_str))?;
+    let oid = Oid::from(&nums).map_err(|e| format!("OID build error: {:?}", e))?;
+    let mut sess = make_session(&profile)?;
+
+    // Build the SNMP value from (type_str, value_str).
+    // OctetString needs a backing buffer that lives long enough, so we collect
+    // it into a local Vec before building the value.
+    let octet_buf: Vec<u8>;
+    let oid_buf: Vec<u64>;
+    let snmp_val: SnmpValue = match type_str.as_str() {
+        "INTEGER" => {
+            let n: i64 = value_str.parse().map_err(|_| "value must be an integer".to_string())?;
+            SnmpValue::Integer(n)
+        }
+        "unsigned INTEGER" => {
+            let n: u32 = value_str.parse().map_err(|_| "value must be an unsigned integer".to_string())?;
+            SnmpValue::Unsigned32(n)
+        }
+        "TIMETICKS" => {
+            let n: u32 = value_str.parse().map_err(|_| "value must be a u32".to_string())?;
+            SnmpValue::Timeticks(n)
+        }
+        "IPADDRESS" => {
+            let parts: Vec<u8> = value_str
+                .split('.')
+                .map(|p| p.parse::<u8>().map_err(|_| "invalid IP octet".to_string()))
+                .collect::<Result<Vec<_>, _>>()?;
+            if parts.len() != 4 {
+                return Err("IP address must have 4 octets".to_string());
+            }
+            SnmpValue::IpAddress([parts[0], parts[1], parts[2], parts[3]])
+        }
+        "OID" => {
+            oid_buf = parse_oid_str(&value_str)
+                .ok_or_else(|| format!("invalid OID value: {}", value_str))?;
+            let v_oid = Oid::from(&oid_buf).map_err(|e| format!("{:?}", e))?;
+            SnmpValue::ObjectIdentifier(v_oid)
+        }
+        "unsigned int64" => {
+            let n: u64 = value_str.parse().map_err(|_| "value must be a u64".to_string())?;
+            SnmpValue::Counter64(n)
+        }
+        _ => {
+            // STRING / HEX STRING / DECIMAL STRING / BITS / etc.
+            octet_buf = value_str.into_bytes();
+            SnmpValue::OctetString(&octet_buf)
+        }
+    };
+
+    let pdu = sess.set(&[(&oid, snmp_val)]).map_err(|e| e.to_string())?;
+    Ok(collect_pdu_results(pdu))
+}
+
+/// Push SNMP query results (or an error) into the UI result list.
+/// New results are prepended (newest at top).
+fn push_snmp_results(
+    res: Result<Vec<SnmpQueryResult>, String>,
+    all_items: &[TreeItem],
+    model: &slint::VecModel<SNMPResultRow>,
+    host: &str,
+) {
+    match res {
+        Err(e) => {
+            let err_win = match SNMPResponseErrorWindow::new() {
+                Ok(w) => w,
+                Err(_) => return,
+            };
+            err_win.set_messages(e.into());
+            let _ = err_win.show();
+        }
+        Ok(rows) => {
+            let time = now_time_str();
+            // Insert newest at top, preserving per-operation order.
+            for (insert_pos, row) in rows.iter().enumerate() {
+                let name = lookup_name_for_oid(all_items, &row.oid);
+
+                let row_value_parsed = if row.value.chars().any(|c| c.is_control() && !c.is_whitespace()) {
+                    let mut result: String = row.value.encode_hex();
+                    result.push_str(" (HEX)");
+                    result
+                } else {
+                    row.value.clone()
+                };
+
+
+                model.insert(
+                    insert_pos,
+                    SNMPResultRow {
+                        host: host.into(),
+                        name: name.into(),
+                        oid: row.oid.clone().into(),
+                        value: row_value_parsed.into(),
+                        value_type: row.value_type.clone().into(),
+                        rx_time_iso8601: time.clone().into(),
+                    },
+                );
+            }
+        }
+    }
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -417,6 +770,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         cfg.active_profile = name.to_string();
         save_config(&cfg);
     });
+    // -- SNMP results model --
+    let snmp_results_model = Rc::new(slint::VecModel::<SNMPResultRow>::from(vec![]));
+    ui.set_snmp_result_rows(snmp_results_model.clone().into());
+
     let (initial_flat, initial_indices) = get_visible_items(&all_items.borrow());
 
     let mib_model = Rc::new(slint::VecModel::from(initial_flat));
@@ -449,6 +806,112 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     });
                 }
             }
+        }
+    });
+
+    // -- Clear SNMP results --
+    let results_for_clear = snmp_results_model.clone();
+    ui.on_snmp_result_clear(move || {
+        results_for_clear.set_vec(vec![]);
+    });
+
+    // -- SNMP Go! button --
+    let ui_weak_for_go = ui.as_weak();
+    let config_for_go = config.clone();
+    let all_items_for_go = all_items.clone();
+    let results_for_go = snmp_results_model.clone();
+
+    ui.on_toolbar_snmp_go_button_clicked(move || {
+        let Some(ui_ref) = ui_weak_for_go.upgrade() else { return };
+        let oid_str = ui_ref.get_toolbar_oid_text().to_string();
+        let op = ui_ref.get_toolbar_snmp_op_value().to_string();
+        let active = ui_ref.get_active_profile().to_string();
+
+        if oid_str.trim().is_empty() {
+            return;
+        }
+
+        let cfg = config_for_go.borrow();
+        let Some(profile) = cfg.profiles.iter().find(|p| p.name == active).cloned() else {
+            return;
+        };
+        drop(cfg);
+
+        if op.as_str() == "SET" {
+            let data_type = find_data_type_for_oid(&all_items_for_go.borrow(), &oid_str);
+            let idx = data_type_to_index(&data_type);
+
+            let set_dialog = match SNMPSetDialog::new() {
+                Ok(d) => d,
+                Err(e) => {
+                    tracing::warn!(error = %e, "failed to create SNMPSetDialog");
+                    return;
+                }
+            };
+            set_dialog.set_data_type_index(idx);
+            set_dialog.set_value_text("".into());
+
+            let results2 = results_for_go.clone();
+            let oid2 = oid_str.clone();
+            let profile2 = profile.clone();
+            let all_items2 = all_items_for_go.clone();
+            let host2 = profile.host.clone();
+
+            set_dialog.on_set(move |type_str, val_str| {
+                let oid = oid2.clone();
+                let prof = profile2.clone();
+                let ts = type_str.to_string();
+                let vs = val_str.to_string();
+                let results = results2.clone();
+                let items = all_items2.clone();
+                let host = host2.clone();
+
+                slint::spawn_local(async move {
+                    let res = tokio::task::spawn_blocking(move || {
+                        do_snmp_set(prof, oid, ts, vs)
+                    })
+                    .await
+                    .unwrap_or_else(|e| Err(e.to_string()));
+                    push_snmp_results(res, &items.borrow(), &results, &host);
+                })
+                .unwrap();
+            });
+
+            if let Err(e) = set_dialog.show() {
+                tracing::warn!(error = %e, "failed to show SNMPSetDialog");
+            }
+        } else {
+            let results = results_for_go.clone();
+            let items = all_items_for_go.clone();
+            let oid = oid_str.clone();
+            let host = profile.host.clone();
+
+            let op = op.clone();
+            slint::spawn_local(async move {
+                let op = op;
+
+                let op_4_snmp_action = op.clone();
+                let op_4_get_next_result = op.clone();
+
+                let res = tokio::task::spawn_blocking(move || match op_4_snmp_action.as_str() {
+                    "GET" => do_snmp_get(profile, oid),
+                    "GET NEXT" => do_snmp_getnext(profile, oid),
+                    "WALK" => do_snmp_walk(profile, oid),
+                    _ => Err(format!("unknown op: {}", op_4_snmp_action)),
+                })
+                .await
+                .unwrap_or_else(|e| Err(e.to_string()));
+
+                if let Ok(res) = &res && op_4_get_next_result.as_str() == "GET NEXT" {
+                    // GET NEXT should only have an element in the vector
+                    if let Some(res) = res.iter().next() {
+                        ui_ref.set_toolbar_oid_text(res.oid.clone().into());
+                    }
+                }
+                push_snmp_results(res, &items.borrow(), &results, &host);
+
+            })
+            .unwrap();
         }
     });
 

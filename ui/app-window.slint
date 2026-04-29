@@ -11,6 +11,7 @@ import {
     ScrollView,
     GridBox,
     AboutSlint,
+    TextEdit,
 } from "std-widgets.slint";
 
 struct MibNode {
@@ -37,6 +38,15 @@ struct MibPropertyValues {
 struct UnloadMibItem {
     path: string,
     checked: bool,
+}
+
+struct SNMPResultRow {
+    host: string,
+    name: string,
+    oid: string,
+    value: string,
+    value_type: string,
+    rx_time_iso8601: string,
 }
 
 export component AppWindow inherits Window {
@@ -128,6 +138,11 @@ export component AppWindow inherits Window {
     in-out property <string> active_profile: "localhost";
 
     callback host_selected(string);
+    callback toolbar_snmp_go_button_clicked();
+    callback snmp_result_clear();
+
+    in-out property <string> toolbar_oid_text <=> toolbar_oid.text;
+    in-out property <string> toolbar_snmp_op_value <=> toolbar_snmp_op.current-value;
 
     VerticalLayout {
         HorizontalBox {
@@ -170,13 +185,16 @@ export component AppWindow inherits Window {
                 horizontal-stretch: 1;
             }
 
-            ComboBox {
+            toolbar_snmp_op := ComboBox {
                 model: ["GET", "GET NEXT", "SET", "WALK"];
                 width: 96pt;
             }
 
-            Button {
+            toolbar_snmp_go := Button {
                 text: "Go!";
+                clicked => {
+                    root.toolbar_snmp_go_button_clicked();
+                }
             }
         }
 
@@ -203,7 +221,7 @@ export component AppWindow inherits Window {
                         HorizontalLayout {
                             alignment: start;
                             TouchArea {
-                                width: self.preferred-width;
+                                width: 12pt;
                                 clicked => {
                                     toggle_mib_tree_element(idx);
                                 }
@@ -216,7 +234,9 @@ export component AppWindow inherits Window {
                                 horizontal-stretch: 1;
                                 clicked => {
                                     click_mib_tree_element(idx);
-                                    toolbar_oid.text = root.current_mib_properties.oid;
+                                    toolbar_oid.text = (root.current_mib_properties.syntax != "" && root.current_mib_properties.indexes == "")
+                                        ? root.current_mib_properties.oid + ".0"
+                                        : root.current_mib_properties.oid;
                                 }
                                 Text {
                                     text: node.tree_name;
@@ -354,7 +374,62 @@ export component AppWindow inherits Window {
                 background: Colors.lightgray;
             }
 
-            StandardListView { }
+            VerticalLayout {
+                ListView {
+                    for item[idx] in root.snmp_result_rows: VerticalLayout {
+                        padding-left: 8pt;
+                        padding-right: 8pt;
+                        padding-top: 4pt;
+                        padding-bottom: 4pt;
+                        HorizontalLayout {
+                            TextInput {
+                                text: root.snmp_result_rows[idx].host;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            alignment: LayoutAlignment.start;
+                            spacing: 8pt;
+                            TextInput {
+                                text: root.snmp_result_rows[idx].name;
+                                font-weight: 700;
+                                read-only: true;
+                            }
+
+                            TextInput {
+                                text: root.snmp_result_rows[idx].oid;
+                                read-only: true;
+                            }
+
+                            Text {
+                                text: root.snmp_result_rows[idx].value_type;
+                                font-italic: true;
+                            }
+                        }
+
+                        HorizontalLayout {
+                            TextInput {
+                                text: root.snmp_result_rows[idx].value;
+                                font-size: 12pt;
+                                read-only: true;
+                            }
+                        }
+
+                        TextInput {
+                            text: root.snmp_result_rows[idx].rx_time_iso8601;
+                            font-size: 8pt;
+                            read-only: true;
+                        }
+                    }
+                }
+
+                VerticalBox {
+                    Button {
+                        text: "Clear";
+                        clicked => { root.snmp_result_clear(); }
+                    }
+                }
+            }
         }
     }
 
@@ -364,9 +439,13 @@ export component AppWindow inherits Window {
 }
 
 export component HelpAboutDialog inherits Dialog { // 改用 Window
+    height: 140pt;
     title: "About";
     VerticalLayout {
         Text {
+            font-size: 16pt;
+            font-weight: 700;
+            horizontal-alignment: TextHorizontalAlignment.center;
             text: "mib-browser-rs v0.0.1";
         }
 
@@ -749,5 +828,80 @@ export component UnloadMibDialog inherits Dialog {
                 }
             }
         }
+    }
+}
+
+export component SNMPSetDialog inherits Dialog {
+    min-width: 420pt;
+    title: "Set SNMP Object Value";
+
+    in-out property <int> data_type_index <=> snmp_set_dialog_data_type.current-index;
+    in-out property <string> value_text <=> snmp_set_dialog_value_lineedit.text;
+
+    VerticalLayout {
+        GridBox {
+            Row {
+                Text {
+                    vertical-alignment: TextVerticalAlignment.center;
+                    text: "Data type";
+                }
+
+                snmp_set_dialog_data_type := ComboBox {
+                    model: [
+                        "INTEGER",
+                        "unsigned INTEGER",
+                        "TIMETICKS",
+                        "IPADDRESS",
+                        "OID",
+                        "STRING",
+                        "HEX STRING",
+                        "DECIMAL STRING",
+                        "BITS",
+                        "unsigned int64",
+                        "signed int64",
+                        "float",
+                        "double"
+                    ];
+                }
+            }
+
+            Row {
+                Text {
+                    vertical-alignment: TextVerticalAlignment.center;
+                    text: "Value";
+                }
+
+                snmp_set_dialog_value_lineedit := LineEdit {
+                    placeholder-text: "Target Value";
+                }
+            }
+
+            Rectangle {
+                min-width: 16px;
+                min-height: 16px; /* @lsp:ignore-node */ }
+        }
+    }
+
+    Button {
+        text: "Set";
+        dialog-button-role: action;
+        min-width: 64pt;
+        clicked => {
+            root.set(snmp_set_dialog_data_type.current-value, snmp_set_dialog_value_lineedit.text);
+        }
+    }
+
+    callback set(string, string);
+}
+
+export component SNMPResponseErrorWindow inherits Window {
+    min-width: 420pt;
+    title: "SNMP Response Error";
+
+    in-out property <string> messages;
+
+    Text {
+        vertical-alignment: TextVerticalAlignment.center;
+        text: root.messages;
     }
 }
