@@ -234,9 +234,7 @@ export component AppWindow inherits Window {
                                 horizontal-stretch: 1;
                                 clicked => {
                                     click_mib_tree_element(idx);
-                                    toolbar_oid.text = (root.current_mib_properties.syntax != "" && root.current_mib_properties.indexes == "")
-                                        ? root.current_mib_properties.oid + ".0"
-                                        : root.current_mib_properties.oid;
+                                    toolbar_oid.text = (root.current_mib_properties.syntax != "" && root.current_mib_properties.indexes == "") ? root.current_mib_properties.oid + ".0" : root.current_mib_properties.oid;
                                 }
                                 Text {
                                     text: node.tree_name;
@@ -428,7 +426,9 @@ export component AppWindow inherits Window {
                 VerticalBox {
                     Button {
                         text: "Clear";
-                        clicked => { root.snmp_result_clear(); }
+                        clicked => {
+                            root.snmp_result_clear();
+                        }
                     }
                 }
             }
@@ -440,23 +440,107 @@ export component AppWindow inherits Window {
     callback toggle_mib_tree_element(int);
 }
 
-export component HelpAboutDialog inherits Dialog { // 改用 Window
-    height: 140pt;
-    title: "About";
-    VerticalLayout {
+export component HelpAboutDialog inherits Window {
+    width: 320pt;
+    height: 300pt;
+    title: "About mib-browser-rs";
+
+    property <bool> show-licenses: false;
+
+    property <string> license-text: "This software is licensed under BSD 3-Clause.\n\nThird Party Dependencies:\n- tokio (MIT/Apache-2.0)\n- serde (MIT/Apache-2.0)\n- snmp2 (MIT/Apache-2.0)\n- rasn (MIT/Apache-2.0)\n- rfd (MIT)\n- tracing (MIT)\n- ... and others.";
+
+    if (!show-licenses): VerticalLayout {
+        padding: 16pt;
+        spacing: 8pt;
+        alignment: start;
+
         Text {
-            font-size: 16pt;
-            font-weight: 700;
-            horizontal-alignment: TextHorizontalAlignment.center;
-            text: "mib-browser-rs v0.0.1";
+            font-size: 18pt;
+            font-weight: 800;
+            horizontal-alignment: center;
+            text: "mib-browser-rs";
         }
 
-        AboutSlint { }
+        Text {
+            font-size: 10pt;
+            color: gray;
+            horizontal-alignment: center;
+            text: "v0.0.1";
+        }
+
+        Rectangle {
+            height: 8pt;
+        }
+
+        Text {
+            horizontal-alignment: center;
+            text: "Author: Jason Tseng";
+        }
+
+        Text {
+            font-italic: true;
+            color: #666;
+            horizontal-alignment: center;
+            text: "Vibe with Claude Code and Antigravity";
+        }
+
+        AboutSlint { } // Royalty-free 要求的聲明
+
+        VerticalLayout {
+            alignment: center;
+            Text {
+                horizontal-alignment: TextHorizontalAlignment.center;
+                text: "This software is licensed under BSD 3-Clause.";
+            }
+
+            Button {
+                text: "Third-party Licenses";
+                clicked => {
+                    show-licenses = true;
+                }
+            }
+        }
+
+        Rectangle {
+            vertical-stretch: 1;
+        } // 推到底部
 
         Button {
             text: "OK";
+            primary: true;
             clicked => {
                 root.close();
+            }
+        }
+    }
+
+    if (show-licenses): VerticalLayout {
+        padding: 16pt;
+        spacing: 12pt;
+
+        Text {
+            font-size: 14pt;
+            font-weight: 700;
+            text: "Third Party Licenses";
+        }
+
+        ScrollView {
+            height: 160pt;
+            Rectangle {
+                background: #f0f0f0;
+                TextInput {
+                    font-size: 9pt;
+                    text: "- UI powered by Slint under the Slint Royalty-free License\n- tokio (MIT)\n- tracing (MIT)\n- serde (MIT/Apache-2.0)\n- yaml-rust2 (MIT)\n- hex (Apache-2.0/MIT)\n- snmp2 (MIT/Apache-2.0)\n- mib-rs (MIT)\n- rfd (MIT)";
+                    read-only: true;
+                    wrap: word-wrap;
+                }
+            }
+        }
+
+        Button {
+            text: "Back";
+            clicked => {
+                show-licenses = false;
             }
         }
     }
