@@ -22,6 +22,9 @@ tracing-subscriber = "0.3.23"
 [build-dependencies]
 slint-build = "1.14.1"
 
+[patch.crates-io]
+netsnmp-sys-nocrypto = { git = "https://github.com/jason-cts/netsnmp-sys-nocrypto.git" }
+
 [profile.release]
 codegen-units = 1
 lto = "fat"
