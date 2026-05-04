@@ -1,5 +1,6 @@
 # known bugs
 
+- SNMPv3 settings is just placeholder; not supported yet
 - Go! button is not works due to `active_profile` is not set automatically when create a new device profile from scratch; user have to click profile in the combobox to activate it.
 
 # How to build in Windows (MSVC)
