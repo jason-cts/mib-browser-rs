@@ -1,3 +1,7 @@
+# known bugs
+
+- Go! button is not works due to `active_profile` is not set automatically when create a new device profile from scratch; user have to click profile in the combobox to activate it.
+
 # How to build in Windows (MSVC)
 
 1. install MSVC and Windows SDK from WinGet https://rust-lang.github.io/rustup/installation/windows-msvc.html
