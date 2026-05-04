@@ -3176,7 +3176,7 @@ dependencies = [
 [[package]]
 name = "netsnmp-sys-nocrypto"
 version = "0.1.3"
-source = "git+https://github.com/jason-cts/netsnmp-sys-nocrypto.git#57fb68ae2787c23f8983a859a7b6a3f3384bbbe8"
+source = "git+https://github.com/jason-cts/netsnmp-sys-nocrypto.git#d21587e5e04d5c27badbff1418a8f015f2f3b107"
 dependencies = [
  "libc",
  "windows-sys 0.61.2",
