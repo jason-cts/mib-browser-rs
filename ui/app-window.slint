@@ -554,7 +554,7 @@ struct HostProfile {
     security_level: string, // noAuthNoPriv|authNoPriv|authPriv
     auth_protocol: string,      // md5|sha|sha224|sha256|sha384|sha512
     auth_passphrase: string,
-    privacy_protocol: string,   // des|aes|aes192|aes256|3des
+    privacy_protocol: string,   // des|aes|aes192|aes256
     privacy_passphrase: string,
 }
 
@@ -798,7 +798,7 @@ export component HostConfigWindow inherits Window {
                     }
 
                     ComboBox {
-                        model: ["des", "aes", "aes192", "aes256", "3des"];
+                        model: ["des", "aes", "aes192", "aes256"];
                         current-value <=> root.current_profile.privacy_protocol;
                     }
                 }

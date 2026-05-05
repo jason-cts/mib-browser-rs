@@ -6,7 +6,9 @@ use std::{cell::RefCell, error::Error, fs, path::Path, process, rc::Rc, time::{D
 use hex::ToHex;
 use mib_rs::Loader;
 use slint::Model;
-use snmp2::{Oid, SyncSession, Value as SnmpValue};
+use snmp2::{Oid, SyncSession, Value as SnmpValue, v3};
+use tracing::{Level, level_filters::LevelFilter};
+use tracing_subscriber::{fmt, prelude::*};
 use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 
 slint::include_modules!();
@@ -621,11 +623,65 @@ fn make_session(profile: &Profile) -> Result<SyncSession, String> {
     let community = profile.community.as_bytes().to_vec();
     let timeout = Some(Duration::from_secs(5));
 
-    let sess = match profile.version.as_str() {
-        "1" => SyncSession::new_v1(host.as_str(), &community, timeout, 0),
-        _ => SyncSession::new_v2c(host.as_str(), &community, timeout, 0),
-    };
-    sess.map_err(|e| format!("connect error: {}", e))
+    match profile.version.as_str() {
+        "1" => SyncSession::new_v1(host.as_str(), &community, timeout, 0)
+            .map_err(|e| format!("connect error: {}", e)),
+        "3" => {
+            let mut security = v3::Security::new(profile.community.as_bytes(), profile.auth_passphrase.as_bytes());
+            security = match profile.security_level.to_lowercase().as_str() {
+                "authnopriv" => {
+                    security.with_auth(v3::Auth::AuthNoPriv{})
+                    .with_auth_protocol(match profile.auth_protocol.to_lowercase().as_str() {
+                        "sha" => v3::AuthProtocol::Sha1,
+                        "sha224" => v3::AuthProtocol::Sha224,
+                        "sha256" => v3::AuthProtocol::Sha256,
+                        "sha384" => v3::AuthProtocol::Sha384,
+                        "sha512" => v3::AuthProtocol::Sha512,
+                        _ => v3::AuthProtocol::Md5,
+                    })
+                },
+                "authpriv" => {
+                    security.with_auth_protocol(match profile.auth_protocol.to_lowercase().as_str() {
+                        "sha" => v3::AuthProtocol::Sha1,
+                        "sha224" => v3::AuthProtocol::Sha224,
+                        "sha256" => v3::AuthProtocol::Sha256,
+                        "sha384" => v3::AuthProtocol::Sha384,
+                        "sha512" => v3::AuthProtocol::Sha512,
+                        _ => v3::AuthProtocol::Md5,
+                    }).with_auth(v3::Auth::AuthPriv{
+                        cipher: match profile.privacy_protocol.to_lowercase().as_str() {
+                            "aes" => v3::Cipher::Aes128,
+                            "aes192" => v3::Cipher::Aes192,
+                            "aes256" => v3::Cipher::Aes256,
+                            _ => v3::Cipher::Des,
+                        },
+                        privacy_password: profile.privacy_passphrase.as_bytes().to_vec(),
+                    })
+                },
+                _ => security,
+            };
+
+            if !profile.security_engine_id.is_empty() {
+                let mut engine_id = hex::decode(&profile.security_engine_id).unwrap_or(vec![]);
+                if engine_id.len() > 32 {
+                    tracing::warn!("engine id too long, truncate it");
+                    engine_id.truncate(32);
+                }
+                if engine_id.is_empty() {
+                    tracing::warn!("no engine id, skip it");
+                } else {
+                    security = security.with_engine_id(engine_id.as_slice()).unwrap();
+                }
+            }
+
+            let mut sess = SyncSession::new_v3(host.as_str(), Some(Duration::from_secs(3)), 0, security)
+                .map_err(|e| format!("connect error: {}", e))?;
+            sess.init().map_err(|e| e.to_string())?;
+            Ok(sess)
+        },
+        _ => SyncSession::new_v2c(host.as_str(), &community, timeout, 0)
+            .map_err(|e| format!("connect error: {}", e)),
+    }
 }
 
 /// Collect varbinds from a PDU into owned results.
@@ -644,7 +700,13 @@ fn do_snmp_get(profile: Profile, oid_str: String) -> Result<Vec<SnmpQueryResult>
     let nums = parse_oid_str(&oid_str).ok_or_else(|| format!("invalid OID: {}", oid_str))?;
     let oid = Oid::from(&nums).map_err(|e| format!("OID build error: {:?}", e))?;
     let mut sess = make_session(&profile)?;
-    let pdu = sess.get(&oid).map_err(|e| e.to_string())?;
+
+    let mut res = sess.get(&oid);
+    if res.is_err() && res.clone().err() == Some(snmp2::Error::AuthUpdated) {
+        res = sess.get(&oid);
+    }
+
+    let pdu = res.map_err(|e| e.to_string())?;
     Ok(collect_pdu_results(pdu))
 }
 
@@ -652,7 +714,12 @@ fn do_snmp_getnext(profile: Profile, oid_str: String) -> Result<Vec<SnmpQueryRes
     let nums = parse_oid_str(&oid_str).ok_or_else(|| format!("invalid OID: {}", oid_str))?;
     let oid = Oid::from(&nums).map_err(|e| format!("OID build error: {:?}", e))?;
     let mut sess = make_session(&profile)?;
-    let pdu = sess.getnext(&oid).map_err(|e| e.to_string())?;
+    let mut res = sess.getnext(&oid);
+    if res.is_err() && res.clone().err() == Some(snmp2::Error::AuthUpdated) {
+        res = sess.getnext(&oid);
+    }
+
+    let pdu = res.map_err(|e| e.to_string())?;
     Ok(collect_pdu_results(pdu))
 }
 
@@ -665,7 +732,12 @@ fn do_snmp_walk(profile: Profile, oid_str: String) -> Result<Vec<SnmpQueryResult
     let mut current: Oid<'static> = base_oid.to_owned();
 
     loop {
-        let pdu = sess.getnext(&current).map_err(|e| e.to_string())?;
+    let mut res = sess.getnext(&current);
+    if res.is_err() && res.clone().err() == Some(snmp2::Error::AuthUpdated) {
+        res = sess.getnext(&current);
+    }
+
+    let pdu = res.map_err(|e| e.to_string())?;
         let mut varbinds = pdu.varbinds.into_iter();
         match varbinds.next() {
             None => break,
@@ -747,7 +819,13 @@ fn do_snmp_set(
         }
     };
 
-    let pdu = sess.set(&[(&oid, snmp_val)]).map_err(|e| e.to_string())?;
+    let values = vec![(&oid, snmp_val)];
+    let mut res = sess.set(&values);
+    if res.is_err() && res.clone().err() == Some(snmp2::Error::AuthUpdated) {
+        res = sess.set(&values);
+    }
+
+    let pdu = res.map_err(|e| e.to_string())?;
     Ok(collect_pdu_results(pdu))
 }
 
@@ -805,7 +883,11 @@ fn push_snmp_results(
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
-    tracing_subscriber::fmt::init();
+    tracing_subscriber::Registry::default()
+        .with(tracing_subscriber::fmt::layer()
+            .with_filter(LevelFilter::DEBUG)
+        )
+        .init();
 
     let ui = AppWindow::new()?;
 

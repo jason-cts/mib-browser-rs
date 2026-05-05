@@ -24,6 +24,7 @@ slint-build = "1.14.1"
 
 [patch.crates-io]
 netsnmp-sys-nocrypto = { git = "https://github.com/jason-cts/netsnmp-sys-nocrypto.git" }
+snmp2 = { git = "https://github.com/jason-cts/snmp2.git", branch = "fix-des" }
 
 [profile.release]
 codegen-units = 1
