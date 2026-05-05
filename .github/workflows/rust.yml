@@ -1,0 +1,104 @@
+name: Rust
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_MIN_STACK: "4194304"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build - ${{ matrix.target }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-gnu
+            os: ubuntu-24.04
+            suffix: ""
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            suffix: ".exe"
+          - target: aarch64-unknown-linux-gnu
+            os: ubuntu-24.04
+            suffix: ""
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: Install dependencies (Linux x86_64)
+      if: matrix.target == 'x86_64-unknown-linux-gnu'
+      run: |
+        sudo apt-get update
+        sudo apt-get install -y libfontconfig1-dev libxkbcommon-dev libwayland-dev libgl1-mesa-dev libsnmp-dev
+
+    - name: Setup Windows dependencies
+      if: matrix.target == 'x86_64-pc-windows-msvc'
+      shell: pwsh
+      run: |
+        $url = "https://sourceforge.net/projects/net-snmp/files/net-snmp%20binaries/5.5-binaries/net-snmp-5.5.0-1.x64.exe/download"
+        $dest = "$env:TEMP\net-snmp-setup.exe"
+        Write-Host "Downloading Net-SNMP..."
+        Invoke-WebRequest -Uri $url -OutFile $dest
+        
+        Write-Host "Extracting Net-SNMP using 7z..."
+        mkdir C:\usr
+        & "7z" x $dest -oC:\usr
+        
+        # Check for lib and include directories. They might be nested.
+        $libDir = Get-ChildItem -Path C:\usr -Recurse -Directory -Filter "lib" | Select-Object -First 1
+        if ($libDir) {
+            $base = $libDir.Parent.FullName
+            Write-Host "Found Net-SNMP at $base"
+            "LIB=$($base)\lib;$env:LIB" | Out-File -FilePath $env:GITHUB_ENV -Append
+            "LIBPATH=$($base)\lib;$env:LIBPATH" | Out-File -FilePath $env:GITHUB_ENV -Append
+            "INCLUDE=$($base)\include;$env:INCLUDE" | Out-File -FilePath $env:GITHUB_ENV -Append
+            # Add bin to path for any required DLLs at runtime (though MSVC build usually links)
+            "$($base)\bin" | Out-File -FilePath $env:GITHUB_PATH -Append
+        } else {
+            Write-Error "Failed to find Net-SNMP lib directory in extracted files"
+            Get-ChildItem -Path C:\usr -Recurse
+            exit 1
+        }
+
+    - name: Build (x86_64)
+      if: matrix.target != 'aarch64-unknown-linux-gnu'
+      run: cargo build --verbose --release --target ${{ matrix.target }}
+
+    - name: Run tests (x86_64-linux)
+      if: matrix.target == 'x86_64-unknown-linux-gnu'
+      run: cargo test --verbose --release --target ${{ matrix.target }}
+
+    - name: Build (aarch64-linux)
+      if: matrix.target == 'aarch64-unknown-linux-gnu'
+      run: |
+        cargo install cross --git https://github.com/cross-rs/cross.git
+        cat <<EOF > Cross.toml
+        [target.aarch64-unknown-linux-gnu]
+        pre-build = [
+            "dpkg --add-architecture arm64",
+            "apt-get update",
+            "apt-get install --no-install-recommends --assume-yes libfontconfig1-dev:arm64 libxkbcommon-dev:arm64 libwayland-dev:arm64 libgl1-mesa-dev:arm64 libsnmp-dev:arm64"
+        ]
+        EOF
+        cross build --verbose --release --target ${{ matrix.target }}
+
+    - name: Prepare Assets
+      shell: bash
+      run: |
+        mkdir -p assets
+        cp target/${{ matrix.target }}/release/mib-browser-rs${{ matrix.suffix }} assets/mib-browser-${{ matrix.target }}${{ matrix.suffix }}
+
+    - name: Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: assets/*
+      env:
+        GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
