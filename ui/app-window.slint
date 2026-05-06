@@ -439,6 +439,7 @@ export component HelpAboutDialog inherits Window {
     height: 300pt;
     title: "About mib-browser-rs";
 
+    in property <string> version: "v0.0.0";
     property <bool> show-licenses: false;
 
     property <string> license-text: "This software is licensed under BSD 3-Clause.\n\nThird Party Dependencies:\n- tokio (MIT/Apache-2.0)\n- serde (MIT/Apache-2.0)\n- snmp2 (MIT/Apache-2.0)\n- rasn (MIT/Apache-2.0)\n- rfd (MIT)\n- tracing (MIT)\n- ... and others.";
@@ -459,7 +460,7 @@ export component HelpAboutDialog inherits Window {
             font-size: 10pt;
             color: gray;
             horizontal-alignment: center;
-            text: "v0.1.0";
+            text: root.version;
         }
 
         Rectangle {

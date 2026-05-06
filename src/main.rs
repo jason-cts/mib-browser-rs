@@ -7,8 +7,8 @@ use hex::ToHex;
 use mib_rs::Loader;
 use slint::Model;
 use snmp2::{Oid, SyncSession, Value as SnmpValue, v3};
-use tracing::{Level, level_filters::LevelFilter};
-use tracing_subscriber::{fmt, prelude::*};
+use tracing::level_filters::LevelFilter;
+use tracing_subscriber::prelude::*;
 use yaml_rust2::{Yaml, YamlEmitter, YamlLoader};
 
 slint::include_modules!();
@@ -1211,6 +1211,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
     ui.on_menu_help_about(move || {
         let about = HelpAboutDialog::new().unwrap();
+        about.set_version(format!("v{}", env!("CARGO_PKG_VERSION")).into());
         about.show().unwrap();
         about.on_close({
             let about_weak = about.as_weak();
