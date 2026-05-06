@@ -43,14 +43,10 @@ jobs:
       if: matrix.target == 'x86_64-pc-windows-msvc'
       shell: pwsh
       run: |
-        $url = "https://sourceforge.net/projects/net-snmp/files/net-snmp%20binaries/5.5-binaries/net-snmp-5.5.0-1.x64.exe/download"
-        $dest = "$env:TEMP\net-snmp-setup.exe"
-        Write-Host "Downloading Net-SNMP..."
-        Invoke-WebRequest -Uri $url -OutFile $dest
-        
+        $installer = "win-deps\net-snmp-5.5.0-2.x64.exe"
         Write-Host "Extracting Net-SNMP using 7z..."
-        mkdir C:\usr
-        & "7z" x $dest -oC:\usr
+        New-Item -ItemType Directory -Force -Path C:\usr | Out-Null
+        & "7z" x $installer -oC:\usr -y
         
         # Check for lib and include directories. They might be nested.
         $libDir = Get-ChildItem -Path C:\usr -Recurse -Directory -Filter "lib" | Select-Object -First 1
